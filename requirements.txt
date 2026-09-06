@@ -1,8 +1,0 @@
-numpy
-pandas
-requests
-matplotlib
-scipy
-scikit-learn
-xgboost
-catboost
