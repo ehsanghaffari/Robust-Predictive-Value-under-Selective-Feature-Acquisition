@@ -9,6 +9,7 @@ Analysis code for *Robust Predictive Value under Selective Feature Acquisition: 
 - `3_ml_premise/` — machine-learning comparisons
 - `4_design_based_and_attribution/` — uncertainty and attribution analyses
 - `5_supplementary_audits/` — optional CRSS and PennDOT diagnostics
+- `6_plot_figures/` — code for Figures 2, 3, and 5–7
 
 ## Data
 
@@ -36,6 +37,8 @@ python 2_bounds_and_frontier/fig9_robust_skill.py
 python 3_ml_premise/ml_premise_temporal_annual.py
 python 4_design_based_and_attribution/design_based_and_attribution.py --ml --three-block --dagjk-groups 15 --dagjk-families lr,xgb
 ```
+
+To recreate Figures 2, 3, and 5–7 from the analysis CSVs, run `python 6_plot_figures/plot_paper_figures.py` (or `RUN_FIGURES.cmd` on Windows).
 
 See `--help` for script options. Generated outputs are written to `outputs/` and are not tracked in Git.
 
