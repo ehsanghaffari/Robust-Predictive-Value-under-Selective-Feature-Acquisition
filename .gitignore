@@ -1,0 +1,23 @@
+# data and generated results are not tracked
+data/*
+!data/README.md
+outputs/*
+!outputs/README.md
+
+# archives and partial downloads
+*.zip
+*.part
+*.pkl
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
