@@ -18,13 +18,15 @@ shares, q_s, q_f and natural prevalence; manuscript Tables 2, 5 and 6):
      tested-unresolved survivors;
   6. conditional versus marginal RFV on two small examples.
 
-Inputs are the rounded annual values reported in the manuscript, so results
-agree with the full pipeline (1_identification_gate, bounds_frontier_oracle.py,
-4_design_based_and_attribution) up to rounding.
+Inputs are the unrounded annual quantities in year_parameters_gt0.csv, written
+by bounds_frontier_oracle.py from the identification gate. When that file is
+absent, the script falls back to the rounded values printed in the manuscript
+(Tables 2, 5 and 6), which agree with the full pipeline up to rounding. The
+input source is printed and recorded in report.json.
 
 Usage
 -----
-    python value_identity_and_skill.py [--output-dir DIR]
+    python value_identity_and_skill.py [--year-params CSV] [--output-dir DIR]
 """
 from __future__ import annotations
 
@@ -42,7 +44,12 @@ _ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawD
 _ap.add_argument("--output-dir", type=Path,
                  default=REPO_ROOT / "outputs" / "2_bounds_and_frontier" / "value_identity_and_skill",
                  help="output folder (default: outputs/2_bounds_and_frontier/value_identity_and_skill)")
-OUT = _ap.parse_args().output_dir
+_ap.add_argument("--year-params", type=Path,
+                 default=REPO_ROOT / "outputs" / "2_bounds_and_frontier" / "year_parameters_gt0.csv",
+                 help="unrounded annual inputs from bounds_frontier_oracle.py "
+                      "(default: outputs/2_bounds_and_frontier/year_parameters_gt0.csv)")
+_args = _ap.parse_args()
+OUT = _args.output_dir
 OUT.mkdir(parents=True, exist_ok=True)
 GAMMA = 4.0
 
@@ -64,6 +71,14 @@ inp = pd.DataFrame(rows, columns=["year", "test_s", "test_f", "alpha_s", "alpha_
 for c in ["test_s", "test_f", "alpha_s", "alpha_f", "q_s"]:
     inp[c] = inp[c] / 100.0
 inp = inp.set_index("year")
+INPUT_SOURCE = "rounded values reported in the manuscript"
+if _args.year_params.exists():
+    _yp = pd.read_csv(_args.year_params).set_index("year").loc[inp.index]
+    inp = pd.DataFrame({"test_s": _yp.survivor_test_rate, "test_f": _yp.fatal_test_rate,
+                        "alpha_s": _yp.alpha_s, "alpha_f": _yp.alpha_f, "q_s": _yp.q_s,
+                        "q_f": _yp.q_f, "pi_nat": _yp.pi_natural})
+    INPUT_SOURCE = f"unrounded annual quantities ({_args.year_params.name})"
+print(f"inputs: {INPUT_SOURCE}")
 
 
 # ---------------------------------------------------------------- core functions
@@ -135,7 +150,7 @@ def risk_intervals(sL, sU, fL, fU, pi):
     return L1, U1, L0, U0
 
 
-report = {}
+report = {"input_source": INPUT_SOURCE}
 
 # ---------------------------------------------------------------- 1. input check
 risk_ms = {  # Table 5 reported values, natural/balanced [L1,U1,L0,U0]
@@ -211,9 +226,9 @@ r = inp.loc[2024]
 sL24, sU24, _, _ = mas_intervals(r)
 g_lo = r.q_s / GAMMA
 t3 = []
-grid = [(0.01, 0.25), (0.04, 0.25), (0.08, 0.25), (0.15, 0.25),
-        (round(g_lo, 4), 0.25), (0.30, 0.25), (round(r.q_s, 4), 0.25),
-        (0.15, 0.50), (0.30, 0.50), (round(r.q_s, 4), 1.00)]
+grid = [(0.01, 0.25), (0.04, 0.25), (0.08, 0.25), (0.15, 0.25),   # the endpoints q_s/Gamma and q_s are
+        (g_lo, 0.25), (0.30, 0.25), (r.q_s, 0.25),                     # used exactly, so they stay inside the
+        (0.15, 0.50), (0.30, 0.50), (r.q_s, 1.00)]                     # primary set whatever the input precision
 for g, ph in grid:
     s = r.alpha_s * r.q_s + (1 - r.alpha_s) * g
     f = r.alpha_f * r.q_f + (1 - r.alpha_f) * ph

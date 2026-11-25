@@ -242,17 +242,40 @@ def make_accounting_audit(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def plot_boundary(boundary_df: pd.DataFrame, outpath: Path) -> None:
-    fig, ax = plt.subplots(figsize=(9, 5.5))
-    ax.plot(boundary_df["year"], boundary_df["s_U"], marker="o", label="s_U = q_test")
-    ax.plot(boundary_df["year"], boundary_df["f_L"], marker="s", label="f_L (phi_L=0)")
-    ax.fill_between(boundary_df["year"], boundary_df["f_L"], boundary_df["s_U"], alpha=0.15, label="overlap: zero-RFV guarantee")
-    ax.axhline(0, linewidth=0.8)
-    ax.set_xlabel("CRSS year")
+    """Fig. 1: survivor ceiling s_U and fatal floor f_L (phi_L = 0) by year, with the
+    separation margin d_sep = f_L - s_U labelled next to each year's survivor point."""
+    d = boundary_df.sort_values("year")
+    yrs = d["year"].to_numpy(int)
+    fL, sU = d["f_L"].to_numpy(float), d["s_U"].to_numpy(float)
+    navy, rust = "#1f3a6e", "#a63603"
+    plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 11})
+    fig, ax = plt.subplots(figsize=(9.645, 5.295))
+    ax.fill_between(yrs, fL, sU, color="#d9d9d9", lw=0, label="Overlap region: RFV = 0", zorder=0)
+    for x, lo, hi in zip(yrs, fL, sU):                       # the gap measured by d_sep
+        ax.plot([x, x], [lo, hi], color="#8c8c8c", lw=0.9, ls=(0, (2, 2)), zorder=1)
+    ax.plot(yrs, sU, color=navy, lw=2.4, marker="o", ms=7, zorder=3,
+            label=r"$s_U = q_{test}$  (survivor ceiling)")
+    ax.plot(yrs, fL, color=rust, lw=2.4, marker="s", ms=7, zorder=3,
+            label=r"$f_L = \alpha_f q_f$  (fatal floor, $\varphi_L = 0$)")
+    for i, (x, lo, hi) in enumerate(zip(yrs, fL, sU)):
+        # label just under the survivor point, on the side away from a steep neighbouring segment
+        right_drop = hi - sU[i + 1] if i + 1 < len(sU) else 0.0
+        left_drop = hi - sU[i - 1] if i > 0 else 0.0
+        last = i == len(sU) - 1
+        side = -1 if (last or right_drop > max(left_drop, 0.15)) else 1   # keep labels inside the band
+        ax.annotate(f"{lo - hi:.2f}".replace("-", "−"), xy=(x, hi), xytext=(side * 7, -9),
+                    textcoords="offset points", ha="left" if side > 0 else "right", va="top",
+                    fontsize=10, color="#262626", zorder=4)
+    ax.set_xlim(yrs.min() - 0.4, yrs.max() + 0.4)
+    ax.set_ylim(0, 1.02)
+    ax.set_xticks(yrs)
+    ax.set_xlabel("CRSS data year")
     ax.set_ylabel("Admissible alcohol prevalence")
-    ax.set_title("Positive-direction separation boundary, 2016-2024")
-    ax.legend()
+    ax.set_title(r"Separation requires $f_L > s_U$; labels give $d_{sep} = f_L - s_U$", fontsize=11)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.legend(loc="upper right", frameon=False, fontsize=10)
     fig.tight_layout()
-    fig.savefig(outpath, dpi=220)
+    fig.savefig(outpath, dpi=200)
     plt.close(fig)
 
 
@@ -408,7 +431,7 @@ def main() -> None:
                                         "OracleGain": oracle_gain(pi, s, f)})
     pd.DataFrame(oracle_rows).to_csv(OUTPUT_DIR / "OracleGain_surface_all_years.csv.gz", index=False, compression="gzip")
 
-    plot_boundary(boundary_df, OUTPUT_DIR / "Figure_boundary_distances.png")
+    plot_boundary(boundary_df, OUTPUT_DIR / "Figure_boundary_distances.png")   # Fig. 1
     plot_frontiers(frontier_df, OUTPUT_DIR / "Figure_joint_assumption_frontier.png")
     plot_oracle_curves(params, OUTPUT_DIR)
 

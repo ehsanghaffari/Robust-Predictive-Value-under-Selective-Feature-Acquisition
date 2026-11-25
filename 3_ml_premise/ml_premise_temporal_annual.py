@@ -110,6 +110,7 @@ INJ_FATAL = 4
 INJ_DIED_PRIOR = 6
 ALC_TEST_GIVEN = 2
 ALC_RES_POSITIVE_NO_VALUE = 998
+KNOWN_INJURY_CODES = [0, 1, 2, 3, 4]
 
 # Concept aliases are deliberately conservative and timing-aware.
 PERSON_CONCEPTS = {
@@ -226,20 +227,23 @@ def bac_gt0_state(alc_status: pd.Series, alc_res: pd.Series) -> tuple[pd.Series,
     return A, R, RZ
 
 
-def prepare_year(year: int, force: bool = False) -> pd.DataFrame:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache = CACHE_DIR / f"CRSS_ML_driver_{year}.pkl"
-    if cache.exists() and not force:
-        return pd.read_pickle(cache)
-
-    zpath = ZIP_DIR / f"CRSS{year}CSV.zip"
-    download(NHTSA_STATIC.format(year=year), zpath)
-    log(f"Preparing CRSS {year}")
+def read_year_tables(zpath: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     with zipfile.ZipFile(zpath) as zf:
         person = read_csv_zip(zf, "person.csv")
         accident = read_csv_zip(zf, "accident.csv")
         vehicle = read_csv_zip(zf, "vehicle.csv")
+    return person, accident, vehicle
 
+
+def build_driver_frame(year: int, person: pd.DataFrame, accident: pd.DataFrame, vehicle: pd.DataFrame,
+                       injury_codes: list[int] | None = KNOWN_INJURY_CODES, design: bool = False) -> pd.DataFrame:
+    """Driver-level frame for one CRSS year (covariates W, A, R, RZ, outcome and weight).
+
+    injury_codes=None keeps every driver except those who died before the crash.
+    design=True adds the survey design variables (DSGN_STRAT, DSGN_PSU) and the raw
+    ALC_STATUS / ALC_RES / INJ_SEV codes; 4_design_based_and_attribution uses these.
+    The defaults give the frame used by every experiment in this script.
+    """
     p_case = resolve_key(person, ["CASENUM", "ST_CASE"], "person case")
     p_veh = resolve_key(person, ["VEH_NO", "VEHICLE_NO", "UNIT_NUM"], "person vehicle")
     per_typ = resolve_key(person, ["PER_TYP", "PERSON_TYPE"], "person type")
@@ -253,7 +257,8 @@ def prepare_year(year: int, force: bool = False) -> pd.DataFrame:
     person = person[(person[per_typ] == PER_TYP_DRIVER) & (person[inj] != INJ_DIED_PRIOR)].copy()
     # Keep only drivers with a known injury severity (INJ_SEV 0-4); unknown codes
     # could encode death, so they are excluded rather than treated as nonfatal.
-    person = person[person[inj].isin([0, 1, 2, 3, 4])].copy()
+    if injury_codes is not None:
+        person = person[person[inj].isin(injury_codes)].copy()
 
     base = pd.DataFrame({
         "CASE_ID": str(year) + "_" + person[p_case].astype(str),
@@ -266,6 +271,10 @@ def prepare_year(year: int, force: bool = False) -> pd.DataFrame:
     base["A_TEST"] = A.values
     base["R_RESOLVED"] = R.values
     base["RZ_POSITIVE"] = RZ.values
+    if design:
+        base["ALC_STATUS_RAW"] = pd.to_numeric(person[alc_status], errors="coerce").values
+        base["ALC_RES_RAW"] = pd.to_numeric(person[alc_res], errors="coerce").values
+        base["INJ_SEV_RAW"] = person[inj].values
 
     # Weight: prefer person weight; otherwise merge accident weight.
     if "WEIGHT" in person.columns:
@@ -278,6 +287,9 @@ def prepare_year(year: int, force: bool = False) -> pd.DataFrame:
     acon["CASE_ID"] = (str(year) + "_" + accident[a_case].astype(str)).values
     if "WEIGHT" in accident.columns:
         acon["ACC_WEIGHT"] = pd.to_numeric(accident["WEIGHT"], errors="coerce").values
+    if design:
+        acon["DSGN_STRAT"] = accident[resolve_key(accident, ["PSUSTRAT"], "design stratum")].astype(str).values
+        acon["DSGN_PSU"] = accident[resolve_key(accident, ["PSU_VAR"], "design PSU")].astype(str).values
     acon = acon.drop_duplicates("CASE_ID")
 
     v_case = resolve_key(vehicle, ["CASENUM", "ST_CASE"], "vehicle case")
@@ -298,6 +310,19 @@ def prepare_year(year: int, force: bool = False) -> pd.DataFrame:
         out["SAMPLE_WEIGHT"] = out["SAMPLE_WEIGHT"].fillna(out["ACC_WEIGHT"])
     out = out.drop(columns=[c for c in ["ACC_WEIGHT"] if c in out.columns])
     out["SAMPLE_WEIGHT"] = pd.to_numeric(out["SAMPLE_WEIGHT"], errors="coerce").fillna(1.0).clip(lower=1e-12)
+    return out
+
+
+def prepare_year(year: int, force: bool = False) -> pd.DataFrame:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache = CACHE_DIR / f"CRSS_ML_driver_{year}.pkl"
+    if cache.exists() and not force:
+        return pd.read_pickle(cache)
+
+    zpath = ZIP_DIR / f"CRSS{year}CSV.zip"
+    download(NHTSA_STATIC.format(year=year), zpath)
+    log(f"Preparing CRSS {year}")
+    out = build_driver_frame(year, *read_year_tables(zpath))
 
     # Year-level q_test, used in the annual experiment.
     known = out["R_RESOLVED"] == 1
@@ -305,6 +330,21 @@ def prepare_year(year: int, force: bool = False) -> pd.DataFrame:
     out.attrs["q_test"] = float(q_test)
     out.to_pickle(cache)
     return out
+
+
+BASE_COLUMNS = ["CASE_ID", "VEH_ID", "YEAR", "Y_FATAL", "SAMPLE_WEIGHT", "A_TEST", "R_RESOLVED", "RZ_POSITIVE"]
+
+
+def pool_years(frames: dict[int, pd.DataFrame], extra: list[str] | None = None) -> tuple[pd.DataFrame, list[str]]:
+    """Pool the yearly frames, keeping only covariate concepts present in every year
+    (prevents hidden year-specific availability advantages). `extra` columns are
+    carried along but never used as covariates."""
+    all_df = pd.concat(frames.values(), ignore_index=True, sort=False)
+    feature_candidates = [c for c in all_df.columns if c.startswith(("P_", "A_", "V_", "VX_")) and c not in {"A_TEST", "R_RESOLVED", "RZ_POSITIVE"}]
+    present_by_year = {c: all(c in frames[y].columns for y in frames) for c in feature_candidates}
+    common = [c for c, ok in present_by_year.items() if ok]
+    keep = BASE_COLUMNS + common + list(extra or [])
+    return all_df[keep].copy(), common
 
 
 def feature_sets(df: pd.DataFrame, tier: str, arm: str) -> tuple[list[str], list[str]]:
@@ -648,13 +688,7 @@ def main() -> None:
     annual_q.to_csv(OUT / "annual_prepared_support.csv", index=False)
     pd.DataFrame(schema_rows).to_csv(OUT / "prepared_schema_by_year.csv", index=False)
 
-    all_df = pd.concat(frames.values(), ignore_index=True, sort=False)
-    # Use common feature concepts across all years to prevent hidden year-specific availability advantages.
-    feature_candidates = [c for c in all_df.columns if c.startswith(("P_", "A_", "V_", "VX_")) and c not in {"A_TEST", "R_RESOLVED", "RZ_POSITIVE"}]
-    present_by_year = {c: all(c in frames[y].columns for y in YEARS) for c in feature_candidates}
-    common = [c for c, ok in present_by_year.items() if ok]
-    keep = ["CASE_ID", "VEH_ID", "YEAR", "Y_FATAL", "SAMPLE_WEIGHT", "A_TEST", "R_RESOLVED", "RZ_POSITIVE"] + common
-    all_df = all_df[keep].copy()
+    all_df, common = pool_years(frames)
     frames = {y: all_df[all_df.YEAR == y].copy() for y in YEARS}
     (OUT / "common_feature_list.json").write_text(json.dumps(common, indent=2), encoding="utf-8")
 

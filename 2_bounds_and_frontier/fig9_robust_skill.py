@@ -1,8 +1,9 @@
 """Fig. 9: exact robust Brier skill beyond the assumption frontier, CRSS 2024.
 
-Inputs are the 2024 summary quantities (alpha_s, q_s, alpha_f, q_f and the
-natural fatal prevalence). Usage:
-    python fig9_robust_skill.py [--output PATH]
+Inputs are the 2024 quantities alpha_s, q_s, alpha_f, q_f and the natural fatal
+prevalence, read unrounded from year_parameters_gt0.csv (bounds_frontier_oracle.py)
+when it exists, otherwise the rounded values reported in the manuscript. Usage:
+    python fig9_robust_skill.py [--year-params CSV] [--output PATH]
 Default output: outputs/2_bounds_and_frontier/fig9_robust_skill_2024.png
 """
 import argparse, numpy as np, matplotlib
@@ -14,9 +15,19 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 _ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 _ap.add_argument("--output", type=Path,
                  default=REPO_ROOT / "outputs" / "2_bounds_and_frontier" / "fig9_robust_skill_2024.png")
-out = _ap.parse_args().output
+_ap.add_argument("--year-params", type=Path,
+                 default=REPO_ROOT / "outputs" / "2_bounds_and_frontier" / "year_parameters_gt0.csv")
+_args = _ap.parse_args()
+out = _args.output
 out.parent.mkdir(parents=True, exist_ok=True)
-a_s, q_s, a_f, q_f, pi_nat = 0.0111, 0.5136, 0.1192, 0.412, 0.002182
+a_s, q_s, a_f, q_f, pi_nat = 0.0111, 0.5136, 0.1192, 0.412, 0.002182   # rounded fallback
+if _args.year_params.exists():
+    import pandas as pd
+    _r = pd.read_csv(_args.year_params).set_index("year").loc[2024]
+    a_s, q_s, a_f, q_f, pi_nat = _r.alpha_s, _r.q_s, _r.alpha_f, _r.q_f, _r.pi_natural
+    print(f"inputs: unrounded 2024 quantities ({_args.year_params.name})")
+else:
+    print("inputs: rounded 2024 values reported in the manuscript")
 def og(s, f, pi):
     m1 = pi*f + (1-pi)*s
     return (pi*(1-pi))**2*(f-s)**2/(m1*(1-m1))
