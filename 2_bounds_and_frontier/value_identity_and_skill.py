@@ -327,7 +327,7 @@ for y, rr in inp.iterrows():
     dec.append(dict(year=y, tested_unresolved_share=tu, w_TU=w_tu,
                     d_sep_primary=d,
                     d_sep_TU_unrestricted=d - tu * (1 - rr.q_s),   # gamma_TU in [0,1]
-                    d_sep_TU_all_negative=d + tu * rr.q_s,         # gamma_TU = 0 (most favourable to separation)
+                    d_sep_TU_all_negative=d + tu * rr.q_s,         # gamma_TU = 0 (most favorable to separation)
                     fatal_tested_unresolved_share=rr.test_f - rr.alpha_f))
 dec = pd.DataFrame(dec).set_index("year")
 dec.to_csv(OUT / "mas_ceiling_decomposition.csv")

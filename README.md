@@ -90,28 +90,29 @@ Notes on step 4:
 * ML fits are checkpointed in `ml_fits_<cohort>.csv`, so an interrupted run resumes where it stopped. To shorten a run, use `--seeds`, `--families` or `--tiers`.
 * The ML analyses import `3_ml_premise/ml_premise_temporal_annual.py` and reuse its data preparation, covariates, case split, models and metrics, so M0, M1 and M2 on the ML cohort are the Table 7 fits. They need `--zipdir` (default) or `--raw-dir`.
 * Two reproduction checks run automatically when their reference files exist: the identification quantities against `outputs/1_identification_gate/crss_identification_gate.csv` (`gate_reproduction_check.csv`), and M0/M1/M2 against `outputs/3_ml_premise/all_model_metrics.csv` (`ml_reproduction_check.csv`). The log reports `MATCH` when they agree (Tables S14 and S15). Run step 4 after steps 1 and 3 so both checks can run.
-* Step 5 repeats, for BAC >= 0.08, every ML specification that uses result resolution or the alcohol value (M_R, M_AR, M2 in the pooled block-order analysis, M2 in the delete-a-group jackknife and in the annual analysis), with the same case splits, seeds and hyperparameters. M0 and M1 do not use alcohol results, so their BAC > 0 results are reused rather than refitted (M0 is refitted inside the delete-a-group replicates, whose levels were not stored). Before fitting, it checks that it rebuilds the BAC > 0 features and fits exactly (`bac08_alignment_check.csv`, `dagjk_grouping_check_bac08.csv`). It is checkpointed and resumes after an interruption.
+* Step 5 repeats, for BAC >= 0.08, every reported ML result that uses result resolution or the alcohol value (M_R, M_AR, M2 in the pooled block-order analysis, M2 in the delete-a-group jackknife and in the annual analysis), with the same case splits, seeds and hyperparameters. The temporal holdout analysis reports only M1 - M0, so its M2 fits are not repeated. M0 and M1 do not use alcohol results, so their BAC > 0 results are reused rather than refitted (M0 is refitted inside the delete-a-group replicates, whose levels were not stored). Before fitting, it checks that it rebuilds the BAC > 0 features and fits exactly (`bac08_alignment_check.csv`, `dagjk_grouping_check_bac08.csv`). It is checkpointed and resumes after an interruption.
 * At the end, the script writes Online Resource 1 (`online_resource_1.docx`, every table captioned) and `supplementary_tables.xlsx` from its CSV outputs. To rebuild them from an existing outputs folder without re-running anything: `python 4_design_based_and_attribution/make_online_resource.py`.
 
 ## Outputs and where they appear in the article
 
 | Script | Output (under `outputs/`) | Article |
 |---|---|---|
-| `crss_identification_gate.py` | `1_identification_gate/crss_annual_acquisition_support.csv`, `crss_identification_gate.csv` | Table 2; data for Figs. 2 and 3 |
+| `crss_identification_gate.py` | `1_identification_gate/crss_annual_acquisition_support.csv`, `crss_identification_gate.csv` (column `q_test_BAC_gt0_weighted` is the article's q_s) | Table 2 |
 | | `1_identification_gate/crss_pooled_fatal_stability.csv` | Table 3 |
 | | `1_identification_gate/<year>_ALC_STATUS_by_ALC_RES_raw_crosstab.csv` | coding audit (Sect. 4.2) |
 | `bounds_frontier_oracle.py` | `2_bounds_and_frontier/all_year_risk_intervals_and_RFV.csv` | Table 5 |
-| | `2_bounds_and_frontier/all_year_boundary_distances.csv`, `Figure_boundary_distances.png` | Table 6, Fig. 1 |
+| | `2_bounds_and_frontier/all_year_boundary_distances.csv`, `Fig1_boundary_distances.png` | Table 6, Fig. 1 |
+| | `2_bounds_and_frontier/Fig2_testing_rates.png`, `Fig3_survivor_positivity.png` | Figs. 2 and 3 |
 | | `2_bounds_and_frontier/year_parameters_gt0.csv` | annual inputs for the two scripts below |
-| | `2_bounds_and_frontier/joint_assumption_frontier_table.csv`, `Figure_joint_assumption_frontier.png` | Table 10, Fig. 8 |
-| | `2_bounds_and_frontier/OracleGain_2024_balanced.png` | Fig. 4 |
+| | `2_bounds_and_frontier/joint_assumption_frontier_table.csv`, `Fig8_joint_assumption_frontier.png` | Table 10, Fig. 8 |
+| | `2_bounds_and_frontier/Fig4_oraclegain_2024.png` | Fig. 4 |
 | | `2_bounds_and_frontier/full_accounting_audit.csv` | accounting audit (Sect. 4.5) |
 | `value_identity_and_skill.py` | `2_bounds_and_frontier/value_identity_and_skill/oraclegain_sensitivity_2024.csv` | Table 4 |
 | | `2_bounds_and_frontier/value_identity_and_skill/rfv_beyond_boundary.csv` | Table 11 |
 | | `2_bounds_and_frontier/value_identity_and_skill/check_value_identity.csv` | numerical check of the value identity |
 | `fig9_robust_skill.py` | `2_bounds_and_frontier/fig9_robust_skill_2024.png` | Fig. 9 |
 | `ml_premise_temporal_annual.py` | `3_ml_premise/all_model_metrics.csv`, `paired_arm_delta_seed_summary.csv` | Tables 7 and 8; data for Figs. 5 and 6 |
-| | `3_ml_premise/annual_apparent_value_vs_qtest_summary.csv`, `annual_qtest_spearman_descriptive.csv` | Table 9; data for Fig. 7 |
+| | `3_ml_premise/annual_apparent_value_vs_qtest_summary.csv`, `annual_qtest_spearman_descriptive.csv` (column `q_test` is the article's q_ML) | Table 9; data for Fig. 7 |
 | | `3_ml_premise/split_ids/split_ids_<experiment>.csv.gz` | case-level train/val/test split for each seed (the pooled one is released in `results/split_ids/`) |
 | `design_based_and_attribution.py` | `4_design_based_and_attribution/attribution_summary.csv` | Sect. 6.7 (block order, testing status, cohort) |
 | `bac08_result_block.py` | `4_design_based_and_attribution/attribution_summary_bac08.csv`, `annual_spearman_bac08.csv` | Sect. 6.7 and 6.9 (BAC >= 0.08) |
@@ -135,7 +136,7 @@ The scripts in `5_supplementary_audits/` are not used in the article. The PennDO
 ## Data and code availability
 
 * **Source data.** CRSS 2016-2024 files are publicly available from [NHTSA](https://www.nhtsa.gov/crash-data-systems/crash-report-sampling-system) and are not mirrored here. The PennDOT data used by the supplementary audits are also excluded.
-* **Code.** Everything needed to reproduce the article's tables and figure data from the source data. Figs. 1 and 9 are drawn as published; Figs. 4 and 8 are drawn in a simpler style; Figs. 2, 3 and 5 to 7 are plotted from the CSV outputs listed above, and their plotting code is not included.
+* **Code.** Everything needed to reproduce the article's tables and figure data from the source data. Figs. 1 to 4, 8 and 9 are drawn as published, at 600 dpi; Figs. 5 to 7 are plotted from the CSV outputs listed above, and their plotting code is not included.
 * **Results.** Generated results are not committed, except the case-level split identifiers in `results/split_ids/`. The article reports its results in the main text and Online Resource 1 (identification and machine-learning results for both BAC definitions). The released pipeline reproduces the identification gate output and the Table 7 fits exactly (Online Resource 1, Tables S14 and S15).
 * **License.** The code is released under the MIT License (`LICENSE`), which does not cover the NHTSA or PennDOT source data.
 

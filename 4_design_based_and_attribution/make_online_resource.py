@@ -15,6 +15,7 @@ Requires python-docx.
 from __future__ import annotations
 
 import argparse
+import datetime
 import importlib.util
 import math
 import re
@@ -162,7 +163,7 @@ def spec(name: str, t: pd.DataFrame) -> dict:
                f"status, testing rate among drivers whose status is known; TU, tested-but-unresolved survivors as a "
                f"share of all survivors. The last three columns give d_{{sep}} when the alcohol prevalence of the TU "
                f"component, and of the TU and unknown-status components, is left unrestricted, and when both components "
-               f"are alcohol-negative (the case most favourable to separation). {NOTE_INTERVAL}"
+               f"are alcohol-negative (the case most favorable to separation). {NOTE_INTERVAL}"
                + (" The last column is a point estimate computed from the other columns." if point_only else ""))
     elif num == 5:
         tt = t.reset_index()
@@ -225,7 +226,7 @@ def spec(name: str, t: pd.DataFrame) -> dict:
         tt = t.reset_index()
         brier = num == 11
         tg = (lambda mm, ss: mean_sd(mm * 1e4, ss * 1e4, lambda v: f"{v:.2f}")) if brier else (lambda mm, ss: mean_sd(mm, ss, f4))
-        cols = [("total_gain", "Total reduction, M_{0} − M_{2} (×10^{−4})" if brier else "Total gain, M_{2} − M_{0}"),
+        cols = [("total_gain", "Total reduction, B(M_{0}) − B(M_{2}) (×10^{−4})" if brier else "Total gain, M_{2} − M_{0}"),
                 ("A_first", "Acquisition-first share"), ("A_last", "Acquisition-last share"),
                 ("A_shapley2", "Two-block Shapley share"), ("value_only", "Value-only share")]
         cols = [c for c in cols if f"{c[0]}_mean" in tt]
@@ -237,15 +238,18 @@ def spec(name: str, t: pd.DataFrame) -> dict:
                 row.append(tg(r[f"{c}_mean"], r[f"{c}_std"]) if c == "total_gain" else mean_sd(r[f"{c}_mean"], r[f"{c}_std"]))
             rows.append(row)
         what = "Brier-score reduction" if brier else "PR-AUC gain"
-        sign = (" For the Brier score every difference is a reduction, baseline minus model (for example M_{0} − M_{1} "
-                "in the acquisition-first numerator), so the shares are ratios of Brier reductions."
-                if brier else "")
+        if brier:   # Brier: every difference is a reduction, baseline minus model
+            forms = ("Brier score B(M) of each specification; every difference is a reduction, baseline minus model. "
+                     "Acquisition-first share, (B(M_{0}) − B(M_{1}))/(B(M_{0}) − B(M_{2})); acquisition-last share, "
+                     "(B(M_{R}) − B(M_{2}))/(B(M_{0}) − B(M_{2})); two-block Shapley share, their average; value-only "
+                     "share, (B(M_{AR}) − B(M_{2}))/(B(M_{0}) − B(M_{2})).")
+        else:
+            forms = ("Acquisition-first share, (M_{1} − M_{0})/(M_{2} − M_{0}); acquisition-last share, "
+                     "(M_{2} − M_{R})/(M_{2} − M_{0}); two-block Shapley share, their average; value-only share, "
+                     "(M_{2} − M_{AR})/(M_{2} − M_{0}), with each M denoting fatal PR-AUC.")
         cap = (f"Feature-block order: share of the M_{{0}} → M_{{2}} {what} attributed to the acquisition block, "
                f"machine-learning cohort{', ' + bac if bac else ''}. Entries are means (standard deviations) over the five seeds of the per-seed "
-               f"values; Table 7 and Sect. 6.7 report the corresponding ratios of five-seed means. Acquisition-first "
-               f"share, (M_{{1}} − M_{{0}})/(M_{{2}} − M_{{0}}); acquisition-last share, "
-               f"(M_{{2}} − M_{{R}})/(M_{{2}} − M_{{0}}); two-block Shapley share, their average; value-only "
-               f"share, (M_{{2}} − M_{{AR}})/(M_{{2}} − M_{{0}}).{sign}")
+               f"values; Table 7 and Sect. 6.7 report the corresponding ratios of five-seed means. " + forms)
         landscape = True
     elif num == 12:
         tt = t.reset_index()
@@ -387,6 +391,10 @@ def write_docx(tables: dict[str, pd.DataFrame], path: Path) -> Path:
     specs = [spec(k, v) for k, v in tables.items()]
     specs.sort(key=lambda s: (s["num"], s["part"]))
     doc = Document()
+    cp = doc.core_properties                      # no generator stamp in the file properties
+    cp.author, cp.last_modified_by, cp.comments = AUTHOR, AUTHOR, ""
+    cp.title, cp.subject, cp.keywords = "Online Resource 1", "", ""
+    cp.created = cp.modified = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     zoom = doc.settings.element.find(qn("w:zoom"))
     if zoom is not None and zoom.get(qn("w:percent")) is None:
         zoom.set(qn("w:percent"), "100")
@@ -459,9 +467,10 @@ def write_docx(tables: dict[str, pd.DataFrame], path: Path) -> Path:
             fixed, free = [], list(range(ncol))
         scale = (width - sum(natural[j] for j in fixed)) / sum(natural[j] for j in free)
         widths = [int(natural[j] * (scale if j in free else 1)) for j in range(ncol)]
-        for j, w in enumerate(widths):                        # grid widths (LibreOffice and Word both honour these)
+        for j, w in enumerate(widths):                        # grid widths (LibreOffice and Word both honor these)
             table.columns[j].width = w
-        fs = Pt(8.5) if ncol >= 8 else Pt(9)
+        compact = len(s["rows"]) > (30 if s["landscape"] else 44)   # long tables stay on one page
+        fs = Pt(8) if compact else (Pt(8.5) if ncol >= 8 else Pt(9))
         for i, row in enumerate([s["header"]] + s["rows"]):
             tr = table.rows[i]
             trPr = tr._tr.get_or_add_trPr()
@@ -475,7 +484,7 @@ def write_docx(tables: dict[str, pd.DataFrame], path: Path) -> Path:
                 cell.width = widths[j]
                 par = cell.paragraphs[0]
                 par.paragraph_format.space_after = Pt(0)
-                par.paragraph_format.space_before = Pt(1)
+                par.paragraph_format.space_before = Pt(0 if compact else 1)
                 par.alignment = WD_ALIGN_PARAGRAPH.LEFT if j == 0 or (i > 0 and not re.match(r"^[\d−+\[(n]", str(val))) else WD_ALIGN_PARAGRAPH.CENTER
                 _rich(par, val, size=fs, bold=(i == 0))
                 if i == 0:

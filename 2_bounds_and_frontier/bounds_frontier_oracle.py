@@ -32,7 +32,10 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 
 try:
     from scipy.optimize import minimize
@@ -51,6 +54,7 @@ ORACLE_GAMMA_GRID = np.linspace(0.0, 0.25, 251)
 ORACLE_PHI_GRID = np.linspace(0.0, 1.0, 201)
 SELECTED_PHI_L = [0.00, 0.05, 0.10, 0.20, 0.30]
 SELECTED_GAMMA_CAP = [0.01, 0.02, 0.05, 0.10, 0.15, 0.20]
+FIG_DPI = 600                       # JDSA minimum for combination artwork
 
 
 def log(msg: str) -> None:
@@ -254,7 +258,7 @@ def plot_boundary(boundary_df: pd.DataFrame, outpath: Path) -> None:
     for x, lo, hi in zip(yrs, fL, sU):                       # the gap measured by d_sep
         ax.plot([x, x], [lo, hi], color="#8c8c8c", lw=0.9, ls=(0, (2, 2)), zorder=1)
     ax.plot(yrs, sU, color=navy, lw=2.4, marker="o", ms=7, zorder=3,
-            label=r"$s_U = q_{test}$  (survivor ceiling)")
+            label=r"$s_U = q_s$  (survivor ceiling)")
     ax.plot(yrs, fL, color=rust, lw=2.4, marker="s", ms=7, zorder=3,
             label=r"$f_L = \alpha_f q_f$  (fatal floor, $\varphi_L = 0$)")
     for i, (x, lo, hi) in enumerate(zip(yrs, fL, sU)):
@@ -271,30 +275,100 @@ def plot_boundary(boundary_df: pd.DataFrame, outpath: Path) -> None:
     ax.set_xticks(yrs)
     ax.set_xlabel("CRSS data year")
     ax.set_ylabel("Admissible alcohol prevalence")
-    ax.set_title(r"Separation requires $f_L > s_U$; labels give $d_{sep} = f_L - s_U$", fontsize=11)
     ax.spines[["top", "right"]].set_visible(False)
     ax.legend(loc="upper right", frameon=False, fontsize=10)
     fig.tight_layout()
-    fig.savefig(outpath, dpi=200)
+    fig.savefig(outpath, dpi=FIG_DPI)
+    plt.close(fig)
+
+
+def plot_testing_rates(params: pd.DataFrame, outpath: Path) -> None:
+    """Fig. 2: survey-weighted alcohol testing rates of fatal and surviving drivers (log scale)."""
+    plt.rcdefaults()
+    plt.rcParams["font.family"] = "DejaVu Sans"
+    d = params.sort_values("year")
+    fig, ax = plt.subplots(figsize=(8.0, 5.21))
+    ax.plot(d["year"], 100 * d["fatal_test_rate"], marker="o", ms=8, lw=2, label="Fatal drivers")
+    ax.plot(d["year"], 100 * d["survivor_test_rate"], marker="s", ms=8, lw=2, label="Surviving drivers")
+    ax.set_yscale("log")
+    ax.set_yticks([1, 2, 5, 10, 20, 40])
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{v:g}"))
+    ax.yaxis.set_minor_formatter(mticker.NullFormatter())
+    ax.set_ylim(1, 50)
+    ax.set_xticks(d["year"])
+    ax.set_xlabel("CRSS data year")
+    ax.set_ylabel("Alcohol test rate (%, log scale)")
+    ax.legend(loc="center right", frameon=False)
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=FIG_DPI)
+    plt.close(fig)
+
+
+def plot_survivor_positivity(params: pd.DataFrame, outpath: Path, negatives: tuple[int, int] | None = None) -> None:
+    """Fig. 3: BAC > 0 positivity q_s among tested, resolved surviving drivers.
+    negatives: raw tested-negative survivor counts in 2019 and 2020, shown in the annotation."""
+    plt.rcdefaults()
+    plt.rcParams["font.family"] = "DejaVu Sans"
+    d = params.sort_values("year")
+    fig, ax = plt.subplots(figsize=(8.0, 5.20))
+    ax.axvspan(2019.6, 2020.4, color="C0", alpha=0.12, lw=0)
+    ax.plot(d["year"], 100 * d["q_s"], marker="o", ms=8, lw=2, color="C0")
+    y20 = 100 * float(d.loc[d["year"] == 2020, "q_s"].iloc[0])
+    text = "testing broadens" + (f";\ntested negatives: {negatives[0]} to {negatives[1]}" if negatives else "")
+    ax.annotate(text, xy=(2020, y20), xytext=(2021.2, y20 + 20), fontsize=11,
+                arrowprops=dict(arrowstyle="->", color="black", lw=1))
+    ax.set_xticks(d["year"])
+    ax.set_xlabel("CRSS data year")
+    ax.set_ylabel("BAC > 0 among tested survivors (%)")
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=FIG_DPI)
     plt.close(fig)
 
 
 def plot_frontiers(frontier_all: pd.DataFrame, outpath: Path) -> None:
-    fig, ax = plt.subplots(figsize=(8.5, 6))
-    for year, g in frontier_all.groupby("year"):
-        ax.plot(g["phi_L"], g["c_crit_gamma_cap"], alpha=0.45, label=str(year))
+    """Fig. 8: joint assumption frontier c_crit(phi_L), envelope across years and the extreme years."""
+    plt.rcdefaults()
+    plt.rcParams["font.family"] = "DejaVu Sans"
+    wide = frontier_all.pivot(index="phi_L", columns="year", values="c_crit_gamma_cap").sort_index()
+    at0 = wide.iloc[0]
+    hi, lo = int(at0.idxmax()), int(at0.idxmin())
+    fig, ax = plt.subplots(figsize=(8.0, 5.04))
+    ax.fill_between(wide.index, wide.min(axis=1), wide.max(axis=1), color="C0", alpha=0.18, lw=0,
+                    label=f"Frontier envelope across {wide.columns.min()}–{wide.columns.max()}")
+    ax.plot(wide.index, wide[hi], color="C0", lw=2, label=rf"{hi} (least restrictive at $\varphi_L = 0$)")
+    ax.plot(wide.index, wide[lo], color="C1", lw=2, label=rf"{lo} (most restrictive at $\varphi_L = 0$)")
     ax.set_xlim(0, 0.35)
     ax.set_ylim(0, 0.40)
-    ax.set_xlabel("phi_L: lower bound among unresolved fatal drivers")
-    ax.set_ylabel("critical gamma_cap among unresolved survivors")
-    ax.set_title("Joint external-information frontier")
-    ax.legend(ncol=3, fontsize=8)
+    ax.grid(alpha=0.3)
+    ax.set_xlabel(r"Assumed lower bound $\varphi_L$ among unresolved fatal drivers")
+    ax.set_ylabel(r"Critical survivor upper bound $\gamma_{cap}$ for separation")
+    ax.legend(loc="upper left")
     fig.tight_layout()
-    fig.savefig(outpath, dpi=220)
+    fig.savefig(outpath, dpi=FIG_DPI)
+    plt.close(fig)
+
+
+def plot_oracle_2024(params: pd.DataFrame, outpath: Path, year: int = 2024) -> None:
+    """Fig. 4: OracleGain sensitivity for one year on the standardized 50/50 population."""
+    plt.rcdefaults()
+    plt.rcParams["font.family"] = "DejaVu Sans"
+    r = params.set_index("year").loc[year]
+    fig, ax = plt.subplots(figsize=(8.0, 5.02))
+    for phi_true in [0.05, 0.10, 0.25, 0.50]:
+        f = r["alpha_f"] * r["q_f"] + (1 - r["alpha_f"]) * phi_true
+        vals = [oracle_gain(0.5, r["alpha_s"] * r["q_s"] + (1 - r["alpha_s"]) * g, f) for g in ORACLE_GAMMA_GRID]
+        ax.plot(ORACLE_GAMMA_GRID, vals, lw=2, label=rf"assumed $\varphi_{{true}}$ = {phi_true:.2f}")
+    ax.axhline(0.010, linestyle="--", linewidth=1.0, color="C0", label="0.010 reporting floor")
+    ax.set_xlabel(r"Assumed $\gamma_{true}$ among unresolved survivors")
+    ax.set_ylabel("OracleGain (absolute Brier reduction)")
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=FIG_DPI)
     plt.close(fig)
 
 
 def plot_oracle_curves(params: pd.DataFrame, outdir: Path) -> None:
+    """OracleGain sensitivity curves for every year and both populations (supplementary diagnostics)."""
     for _, r in params.iterrows():
         year = int(r["year"])
         for pop_name, pi in [("natural", r["pi_natural"]), ("balanced", 0.5)]:
@@ -305,11 +379,11 @@ def plot_oracle_curves(params: pd.DataFrame, outdir: Path) -> None:
                     s = r["alpha_s"] * r["q_s"] + (1 - r["alpha_s"]) * gamma_true
                     f = r["alpha_f"] * r["q_f"] + (1 - r["alpha_f"]) * phi_true
                     vals.append(oracle_gain(pi, s, f))
-                ax.plot(ORACLE_GAMMA_GRID, vals, label=f"phi_true={phi_true:.2f}")
+                ax.plot(ORACLE_GAMMA_GRID, vals, label=rf"$\varphi_{{true}}$ = {phi_true:.2f}")
             ax.axhline(0.010, linestyle="--", linewidth=1.0, label="0.010 reporting floor")
-            ax.set_xlabel("assumed gamma_true among unresolved survivors")
+            ax.set_xlabel(r"assumed $\gamma_{true}$ among unresolved survivors")
             ax.set_ylabel("OracleGain (absolute Brier reduction)")
-            ax.set_title(f"OracleGain sensitivity - {year} - {pop_name}")
+            ax.set_title(f"OracleGain sensitivity, {year}, {pop_name} prevalence")
             ax.legend()
             fig.tight_layout()
             fig.savefig(outdir / f"OracleGain_{year}_{pop_name}.png", dpi=220)
@@ -431,8 +505,13 @@ def main() -> None:
                                         "OracleGain": oracle_gain(pi, s, f)})
     pd.DataFrame(oracle_rows).to_csv(OUTPUT_DIR / "OracleGain_surface_all_years.csv.gz", index=False, compression="gzip")
 
-    plot_boundary(boundary_df, OUTPUT_DIR / "Figure_boundary_distances.png")   # Fig. 1
-    plot_frontiers(frontier_df, OUTPUT_DIR / "Figure_joint_assumption_frontier.png")
+    plot_boundary(boundary_df, OUTPUT_DIR / "Fig1_boundary_distances.png")
+    negs = raw.set_index("year")["gt0_b0_raw_n"] if "gt0_b0_raw_n" in raw.columns else None
+    plot_testing_rates(params, OUTPUT_DIR / "Fig2_testing_rates.png")
+    plot_survivor_positivity(params, OUTPUT_DIR / "Fig3_survivor_positivity.png",
+                             None if negs is None else (int(negs.loc[2019]), int(negs.loc[2020])))
+    plot_oracle_2024(params, OUTPUT_DIR / "Fig4_oraclegain_2024.png")
+    plot_frontiers(frontier_df, OUTPUT_DIR / "Fig8_joint_assumption_frontier.png")
     plot_oracle_curves(params, OUTPUT_DIR)
 
     # Compact console summary.

@@ -61,4 +61,4 @@ for ax, (lab, pi, lev) in zip(axes, panels):
     cb.set_label("Robust Brier skill, RFV / $R_{delete}$", fontsize=8.5); cb.ax.tick_params(labelsize=7.5)
 axes[0].set_ylabel(r"Survivor-side cap $\gamma_{cap}$")
 fig.tight_layout()
-fig.savefig(out, dpi=300, bbox_inches="tight")
+fig.savefig(out, dpi=600, bbox_inches="tight")
