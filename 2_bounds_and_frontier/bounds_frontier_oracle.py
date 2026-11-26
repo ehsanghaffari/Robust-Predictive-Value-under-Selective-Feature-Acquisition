@@ -250,7 +250,7 @@ def plot_boundary(boundary_df: pd.DataFrame, outpath: Path) -> None:
     navy, rust = "#1f3a6e", "#a63603"
     plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 11})
     fig, ax = plt.subplots(figsize=(9.645, 5.295))
-    ax.fill_between(yrs, fL, sU, color="#d9d9d9", lw=0, label="Overlap region: RFV = 0", zorder=0)
+    ax.fill_between(yrs, fL, sU, color="#d9d9d9", lw=0, label=r"Gap $f_L < s_U$: no positive separation", zorder=0)
     for x, lo, hi in zip(yrs, fL, sU):                       # the gap measured by d_sep
         ax.plot([x, x], [lo, hi], color="#8c8c8c", lw=0.9, ls=(0, (2, 2)), zorder=1)
     ax.plot(yrs, sU, color=navy, lw=2.4, marker="o", ms=7, zorder=3,

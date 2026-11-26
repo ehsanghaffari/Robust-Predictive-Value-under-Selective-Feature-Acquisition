@@ -41,7 +41,10 @@ METRIC = {"pr_auc": "PR-AUC", "brier": "Brier score", "roc_auc": "ROC-AUC", "log
 MINUS = "−"
 
 NOTE_INTERVAL = ("Point estimates with t-based 95% delete-one-PSU jackknife intervals in brackets "
-                 "(strata PSUSTRAT, clusters PSU_VAR, weight WEIGHT; Sect. 5.8).")
+                 "(strata PSUSTRAT, clusters PSU_VAR, weight WEIGHT; Sect. 5.8). Intervals are the estimate plus or "
+                 "minus t times the jackknife standard error, without truncation, so where the design effective sample "
+                 "size is small a limit can fall below 0 or above 1; such limits indicate imprecision, not admissible "
+                 "values.")
 
 
 # ----------------------------------------------------------------------------- number formats
@@ -49,12 +52,17 @@ def _neg(s: str) -> str:
     return s.replace("-", MINUS)
 
 
+def _nz(s: str) -> str:
+    """'-0.000' -> '0.000' (a value that rounds to zero carries no sign)."""
+    return s[1:] if s.startswith("-") and float(s) == 0 else s
+
+
 def f4(v) -> str:
-    return "n/a" if v is None or (isinstance(v, float) and math.isnan(v)) else _neg(f"{v:.4f}")
+    return "n/a" if v is None or (isinstance(v, float) and math.isnan(v)) else _neg(_nz(f"{v:.4f}"))
 
 
 def f3(v) -> str:
-    return "n/a" if v is None or (isinstance(v, float) and math.isnan(v)) else _neg(f"{v:.3f}")
+    return "n/a" if v is None or (isinstance(v, float) and math.isnan(v)) else _neg(_nz(f"{v:.3f}"))
 
 
 def signed4(v) -> str:
@@ -116,7 +124,7 @@ SHORT = {1: "Prevalence, testing, and resolution", 2: "MAS intervals and overlap
          9: "PR-AUC by specification, tier, and model family", 10: "Feature-block order, PR-AUC",
          11: "Feature-block order, Brier score", 12: "Evaluation-stage design-based uncertainty",
          13: "Refitting delete-a-group jackknife", 14: "Reproduction check, identification quantities",
-         15: "Reproduction check, machine-learning fits"}
+         15: "Reproduction check, machine-learning fits", 16: "Annual selectivity analysis"}
 ML_MODELS = {"M0": "M_{0}", "M1": "M_{1}", "M1_3": "M_{1}^{(3)}", "M_R": "M_{R}", "M_AR": "M_{AR}", "M2": "M_{2}",
              "M2_3": "M_{2}^{(3)}"}
 
@@ -126,7 +134,7 @@ def spec(name: str, t: pd.DataFrame) -> dict:
     m = re.match(r"S(\d+)_.*?(bac0|bac08)?$", name)
     num = int(m.group(1))
     thr = m.group(2)
-    part = {"bac0": "a", "bac08": "b"}.get(thr, "")
+    part = "" if num == 16 else {"bac0": "a", "bac08": "b"}.get(thr, "")   # S16 exists for BAC >= 0.08 only
     label = f"Table S{num}{part}"
     bac = BAC.get(thr, "")
     landscape = True
@@ -140,7 +148,7 @@ def spec(name: str, t: pd.DataFrame) -> dict:
         header, rows = _spec_identification(t, S2_COLS)
         cap = (f"MAS interval endpoints and overlap margins, {bac} (Γ = 4, φ ∈ [0, 1]). Survivor alcohol "
                f"prevalence lies in [s_{{L}}, s_{{U}}] and fatal prevalence in [f_{{L}}, f_{{U}}]. RFV = 0 when both "
-               f"d_{{sep}} and s_{{L}} − f_{{U}} are negative. {NOTE_INTERVAL}")
+               f"d_{{sep}} and s_{{L}} − f_{{U}} are nonpositive, that is, when the two intervals overlap. {NOTE_INTERVAL}")
     elif num == 3:
         header, rows = _spec_identification(t, S3_COLS)
         cap = (f"Critical survivor-side cap c_{{crit}}(φ_{{L}}) of the external-information frontier (Sect. 3.8), "
@@ -181,7 +189,9 @@ def spec(name: str, t: pd.DataFrame) -> dict:
         cap = (f"Conditional RFV given coarse partitions of the covariates W (Sect. 3.9 and 6.11), {bac}, identification "
                f"cohort, Γ = 4. Conditional RFV is the probability-weighted sum of the cell-specific exact RFV "
                f"(Eq. 20); in cells without resolved survivors the survivor prevalence is left unrestricted. The last "
-               f"column divides conditional RFV by the marginal R_{{delete}} = π(1 − π).")
+               f"column divides conditional RFV by the marginal R_{{delete}} = π(1 − π). A cell can be separated on the "
+               f"strength of very few resolved drivers; the separated 2023 cells are described in Sect. 6.11 "
+               f"(conditional_rfv_cell_detail.py).")
     elif num == 8:
         tt = t.reset_index()
         header = ["Cohort", "Definition", "Year", "Upper 95% limit, d_{sep}", "Upper 95% limit, s_{L} − f_{U}",
@@ -200,17 +210,22 @@ def spec(name: str, t: pd.DataFrame) -> dict:
         header = ["Cohort", "Tier", "Family"] + [ML_MODELS[mm] for mm in models]
         rows = [[COHORT.get(r["cohort"], r["cohort"]), TIER.get(r["tier"], r["tier"]), r["family"]]
                 + [f4(r[mm]) for mm in models] for _, r in tt.iterrows()]
-        cap = ("Pooled five-seed mean fatal PR-AUC by specification (Sect. 5.4), covariate tier, and model family. "
+        cap = ("Pooled five-seed mean fatal PR-AUC by specification (Sect. 5.4), covariate tier, and model family"
+               + (f", {bac}" if bac else "") + ". "
                "M_{0} = W; M_{1} = W + A; M_{1}^{(3)}, M_{1} with three-level testing status; M_{R} = W + R + R × Z; "
-               "M_{AR} = W + A + R; M_{2} = W + A + R + R × Z. On the machine-learning cohort, M_{0}, M_{1}, and "
-               "M_{2} reproduce Table 7 (Table S15); on the identification cohort only M_{0} and M_{1} are fitted. "
-               "LR, logistic regression; XGB, XGBoost; CAT, CatBoost; n/a, not fitted.")
+               "M_{AR} = W + A + R; M_{2} = W + A + R + R × Z. "
+               + ("M_{0} and M_{1} do not use alcohol results and are the BAC > 0 fits; M_{R}, M_{AR}, and M_{2} are "
+                  "refitted with R and R × Z defined for BAC ≥ 0.08, on the same case splits, seeds, and "
+                  "hyperparameters. " if thr == "bac08" else
+                  "On the machine-learning cohort, M_{0}, M_{1}, and M_{2} reproduce Table 7 (Table S15); on the "
+                  "identification cohort only M_{0} and M_{1} are fitted. ")
+               + "LR, logistic regression; XGB, XGBoost; CAT, CatBoost; n/a, not fitted.")
         landscape = False
     elif num in (10, 11):
         tt = t.reset_index()
         brier = num == 11
         tg = (lambda mm, ss: mean_sd(mm * 1e4, ss * 1e4, lambda v: f"{v:.2f}")) if brier else (lambda mm, ss: mean_sd(mm, ss, f4))
-        cols = [("total_gain", "Total gain, M_{2} − M_{0}" + (" (×10^{−4})" if brier else "")),
+        cols = [("total_gain", "Total reduction, M_{0} − M_{2} (×10^{−4})" if brier else "Total gain, M_{2} − M_{0}"),
                 ("A_first", "Acquisition-first share"), ("A_last", "Acquisition-last share"),
                 ("A_shapley2", "Two-block Shapley share"), ("value_only", "Value-only share")]
         cols = [c for c in cols if f"{c[0]}_mean" in tt]
@@ -222,12 +237,15 @@ def spec(name: str, t: pd.DataFrame) -> dict:
                 row.append(tg(r[f"{c}_mean"], r[f"{c}_std"]) if c == "total_gain" else mean_sd(r[f"{c}_mean"], r[f"{c}_std"]))
             rows.append(row)
         what = "Brier-score reduction" if brier else "PR-AUC gain"
+        sign = (" For the Brier score every difference is a reduction, baseline minus model (for example M_{0} − M_{1} "
+                "in the acquisition-first numerator), so the shares are ratios of Brier reductions."
+                if brier else "")
         cap = (f"Feature-block order: share of the M_{{0}} → M_{{2}} {what} attributed to the acquisition block, "
-               f"machine-learning cohort. Entries are means (standard deviations) over the five seeds of the per-seed "
+               f"machine-learning cohort{', ' + bac if bac else ''}. Entries are means (standard deviations) over the five seeds of the per-seed "
                f"values; Table 7 and Sect. 6.7 report the corresponding ratios of five-seed means. Acquisition-first "
                f"share, (M_{{1}} − M_{{0}})/(M_{{2}} − M_{{0}}); acquisition-last share, "
                f"(M_{{2}} − M_{{R}})/(M_{{2}} − M_{{0}}); two-block Shapley share, their average; value-only "
-               f"share, (M_{{2}} − M_{{AR}})/(M_{{2}} − M_{{0}}).")
+               f"share, (M_{{2}} − M_{{AR}})/(M_{{2}} − M_{{0}}).{sign}")
         landscape = True
     elif num == 12:
         tt = t.reset_index()
@@ -235,10 +253,13 @@ def spec(name: str, t: pd.DataFrame) -> dict:
         rows = [[COHORT.get(r["cohort"], r["cohort"]), TIER.get(r["tier"], r["tier"]), r["family"],
                  CONTRAST.get(r["contrast"], r["contrast"]), f4(r["est"]), f4(r["se_eval_jk"]), f4(r["seed_sd"])]
                 for _, r in tt.iterrows()]
-        cap = ("Evaluation-stage design-based uncertainty for the machine-learning contrasts (PR-AUC). Each fitted model "
+        cap = ("Evaluation-stage design-based uncertainty for the machine-learning contrasts (PR-AUC)"
+               + (f", {bac}" if bac else "") + ". Each fitted model "
                "is held fixed and the weighted test-set PR-AUC is recomputed under the delete-one-PSU replicate weights. "
                "Estimate and jackknife SE are means over the five seeds; seed SD is the standard deviation of the "
-               "estimate across seeds.")
+               "estimate across seeds."
+               + (" For BAC ≥ 0.08 only the value-only contrast M_{2} − M_{AR} is shown, because M_{0} was not "
+                  "refitted (its BAC > 0 fit is threshold-free) and its test predictions were not stored." if thr == "bac08" else ""))
         landscape = False
     elif num == 13:
         tt = t.reset_index()
@@ -248,9 +269,16 @@ def spec(name: str, t: pd.DataFrame) -> dict:
         rows = [[TIER.get(r["tier"], r["tier"]), r["family"], CONTRAST.get(r["stat"], r["stat"]), f4(r["est"]),
                  f4(r["se_dagjk"]), f"[{f4(r['lo'])}, {f4(r['hi'])}]"] for _, r in tt.iterrows()]
         fam_txt = " and ".join({"LR": "logistic regression", "XGB": "XGBoost", "CAT": "CatBoost"}.get(f, f) for f in fams)
-        cap = (f"Refitting delete-a-group jackknife for the machine-learning contrasts in PR-AUC ({G} PSU groups, one "
-               f"seed split, {fam_txt}). M_{{0}}, M_{{1}}, and M_{{2}} are refitted within each replicate, so sampling "
-               f"variability is propagated through model fitting. Intervals are t-based with {G - 1} degrees of freedom.")
+        if thr == "bac08":
+            cap = (f"Refitting delete-a-group jackknife for the machine-learning contrasts in PR-AUC, {bac} ({G} PSU "
+                   f"groups, one seed split, {fam_txt}). M_{{0}} and M_{{2}} are refitted within each replicate, with the "
+                   f"same PSU groups as Table S13a; M_{{1}} − M_{{0}} is taken from the BAC > 0 replicates, because it does "
+                   f"not use alcohol results. Intervals are t-based with {G - 1} degrees of freedom.")
+        else:
+            cap = (f"Refitting delete-a-group jackknife for the machine-learning contrasts in PR-AUC"
+                   f"{', ' + bac if bac else ''} ({G} PSU groups, one "
+                   f"seed split, {fam_txt}). M_{{0}}, M_{{1}}, and M_{{2}} are refitted within each replicate, so sampling "
+                   f"variability is propagated through model fitting. Intervals are t-based with {G - 1} degrees of freedom.")
         landscape = False
     elif num == 14:
         tt = t.reset_index()
@@ -269,6 +297,17 @@ def spec(name: str, t: pd.DataFrame) -> dict:
         cap = ("Reproduction check of the machine-learning fits: maximum absolute difference between M_{0}, M_{1}, and "
                "M_{2} on the machine-learning cohort in this analysis and the pooled premise results behind Table 7, "
                "over seeds, model families, and covariate tiers.")
+        landscape = False
+    elif num == 16:
+        tt = t.reset_index()
+        header = ["Family", "Years", "ρ(q_{ML}, PR-AUC gain)", "p", "ρ(q_{ML}, Brier gain)", "p"]
+        sg = lambda v: "n/a" if pd.isna(v) else _neg(_nz(f"{v:+.3f}")).replace("+0.000", "0.000")
+        rows = [[r["family"], str(int(r["n_years"])), sg(r["rho_q_pr_gain"]), f3(r["p_q_pr_gain"]),
+                 sg(r["rho_q_brier_gain"]), f3(r["p_q_brier_gain"])] for _, r in tt.iterrows()]
+        cap = (f"Annual selectivity analysis (Sect. 5.6), {bac}: Spearman correlations between annual q_{{ML}} and the "
+               f"held-out M_{{2}} − M_{{0}} gain in fatal PR-AUC and in Brier score (reduction), core tier, five-seed means, "
+               f"as in Table 9. M_{{2}} and q_{{ML}} use BAC ≥ 0.08; M_{{0}} is the BAC > 0 fit, which does not use "
+               f"alcohol results. With nine annual points the analysis is descriptive.")
         landscape = False
     else:
         raise KeyError(name)
@@ -369,23 +408,26 @@ def write_docx(tables: dict[str, pd.DataFrame], path: Path) -> Path:
     notes = [
         "All quantities are weighted with the CRSS case weights. Unless a table states otherwise, results refer to the "
         "identification cohort (all drivers except those who died before the crash), the primary MAS set with Γ = 4, "
-        "and CRSS data years 2016 to 2024. Tables S1 to S7 are given for the primary alcohol definition BAC > 0 (a) and "
-        "for BAC ≥ 0.08 (b).",
+        "and CRSS data years 2016 to 2024. Tables S1 to S7 and S9 to S13 are given for the primary "
+        "alcohol definition BAC > 0 (a) and for BAC ≥ 0.08 (b).",
         "Design-based intervals use the delete-one-PSU jackknife recommended for CRSS (strata PSUSTRAT, clusters "
         "PSU_VAR, weight WEIGHT) with t-based 95% intervals (Sect. 5.8). The machine-learning cohort keeps drivers with "
         "injury severity codes 0 to 4 and is the cohort of Table 7.",
         "The tables are generated by make_online_resource.py from the outputs of design_based_and_attribution.py "
-        "(https://github.com/ehsanghaffari/Robust-Predictive-Value-under-Selective-Feature-Acquisition).",
+        "and bac08_result_block.py "
+        "in the analysis code, version 0.7 (release tag v0.7, "
+        "https://github.com/ehsanghaffari/Robust-Predictive-Value-under-Selective-Feature-Acquisition/releases/tag/v0.7).",
     ]
     for n in notes:
         p = doc.add_paragraph()
         _rich(p, n)
-        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT if "https://" in n else WD_ALIGN_PARAGRAPH.JUSTIFY
     p = doc.add_paragraph()
     _rich(p, "Contents", bold=True)
     for s in specs:
         p = doc.add_paragraph()
         p.paragraph_format.space_after = Pt(0)
+        p.paragraph_format.line_spacing = 1.0
         _rich(p, f"{s['label']}. {SHORT[s['num']]}" + (f", {BAC['bac0' if s['part'] == 'a' else 'bac08']}" if s["part"] else ""),
               size=Pt(10))
 
@@ -412,7 +454,9 @@ def write_docx(tables: dict[str, pd.DataFrame], path: Path) -> Path:
                 for j in range(ncol)]
         natural = [Inches(0.068 * l + 0.2) for l in lens]   # text width at 8.5-9 pt plus cell padding
         fixed = [j for j in range(ncol) if lens[j] <= 8]    # short columns (Year, Tier, Family) keep their width
-        free = [j for j in range(ncol) if j not in fixed] or list(range(ncol))
+        free = [j for j in range(ncol) if j not in fixed]
+        if not free:                                       # every column is short: share the width among all
+            fixed, free = [], list(range(ncol))
         scale = (width - sum(natural[j] for j in fixed)) / sum(natural[j] for j in free)
         widths = [int(natural[j] * (scale if j in free else 1)) for j in range(ncol)]
         for j, w in enumerate(widths):                        # grid widths (LibreOffice and Word both honour these)

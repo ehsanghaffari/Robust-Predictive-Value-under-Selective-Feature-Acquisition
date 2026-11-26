@@ -56,6 +56,7 @@ import argparse
 import hashlib
 import json
 import platform
+import re
 import sys
 import time
 import warnings
@@ -845,6 +846,44 @@ def build_tables(out: Path) -> dict[str, pd.DataFrame]:
         r = pd.read_csv(out / "ml_dagjk_replicates.csv")
         tables["S13_ml_dagjk_refit"] = pd.concat([dagjk_summary(g, "cohort_ml", t) for t, g in r.groupby("tier", sort=False)]
                                                  ).set_index(["tier", "family", "stat"]).round(5)
+    # BAC >= 0.08 result-block analyses (bac08_result_block.py). When present, the BAC > 0 machine-learning tables
+    # become S9a-S13a and the BAC >= 0.08 versions S9b-S13b; S16 holds the annual Spearman analysis.
+    if (out / "ml_fits_cohort_ml_bac08.csv").exists():
+        for k in [k for k in list(tables) if re.match(r"S(9|1[0-3])_", k)]:
+            tables[k + "_bac0"] = tables.pop(k)
+        f8 = pd.read_csv(out / "ml_fits_cohort_ml_bac08.csv")
+        met8 = f8[~f8.model.str.startswith("shares")]
+        tables["S9_ml_prauc_by_model_bac08"] = met8.pivot_table(index=["cohort", "tier", "family"], columns="model",
+                                                                values="pr_auc", aggfunc="mean").round(4)
+        for key, name in [("shares_pr_auc", "S10_block_order_shares_prauc_bac08"),
+                          ("shares_brier", "S11_block_order_shares_brier_bac08")]:
+            sh = f8[f8.model == key]
+            cols = [c for c in ["total_gain", "A_first", "A_last", "A_shapley2", "value_only"] if c in sh and sh[c].notna().any()]
+            t = sh.groupby(["cohort", "tier", "family"])[cols].agg(["mean", "std"])
+            t.columns = [f"{a_}_{b}" for a_, b in t.columns]
+            tables[name] = t
+        p8 = out / "ml_eval_jackknife_cohort_ml_bac08.csv"
+        if p8.exists():
+            j8 = pd.read_csv(p8)
+            tables["S12_ml_design_eval_uncertainty_bac08"] = j8.groupby(["cohort", "tier", "family", "contrast"]).agg(
+                est=("est", "mean"), se_eval_jk=("se_eval_jk", "mean"), seed_sd=("est", "std")).round(5)
+        p8 = out / "ml_dagjk_replicates_bac08.csv"
+        if p8.exists():
+            r8 = pd.read_csv(p8)
+            rows = []
+            for (tier, fam), x in r8.groupby(["tier", "family"], sort=False):
+                full, reps = x[x.rep == -1].iloc[0], x[x.rep >= 0]
+                G = len(reps)
+                for k in ["M2_M0", "A_first_share"]:
+                    se = float(np.sqrt((G - 1) / G * np.sum((reps[k] - full[k]) ** 2)))
+                    rows.append(dict(tier=tier, family=fam, stat=k, est=full[k], se_dagjk=se, groups=G,
+                                     lo=full[k] - tcrit(G - 1) * se, hi=full[k] + tcrit(G - 1) * se))
+            tables["S13_ml_dagjk_refit_bac08"] = pd.DataFrame(rows).set_index(["tier", "family", "stat"]).round(5)
+    p8 = out / "annual_spearman_bac08.csv"
+    if p8.exists() and p8.stat().st_size > 5:
+        sp8 = pd.read_csv(p8)
+        if len(sp8):
+            tables["S16_annual_spearman_bac08"] = sp8.set_index("family")
     if (out / "gate_reproduction_check.csv").exists():
         tables["S14_gate_reproduction_check"] = pd.read_csv(out / "gate_reproduction_check.csv").set_index("statistic")
     if (out / "ml_reproduction_check.csv").exists():
@@ -864,7 +903,9 @@ def write_resource(out: Path, tables: dict[str, pd.DataFrame]):
     try:
         with pd.ExcelWriter(out / "supplementary_tables.xlsx") as xw:
             for name, t in tables.items():
-                t.to_excel(xw, sheet_name=name[:31])
+                suffix = next((x for x in ("_bac08", "_bac0") if name.endswith(x)), "")
+                sheet = name[:len(name) - len(suffix)][:31 - len(suffix)] + suffix   # unique within 31 characters
+                t.to_excel(xw, sheet_name=sheet)
     except Exception as e:  # openpyxl missing
         print("xlsx not written:", e)
 
